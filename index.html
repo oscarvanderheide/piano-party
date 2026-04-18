@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>🎹 Piano Party</title>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;margin:0;padding:0}
+  html,body{height:100%;overscroll-behavior:none}
+  body{background:#F2EADD;font-family:system-ui,-apple-system,sans-serif}
+  button{-webkit-user-select:none;user-select:none;cursor:pointer;border:none;background:none}
+  canvas{display:block}
+
+  @keyframes pulse-expected{
+    0%,100%{transform:scale(1) translateY(0)}
+    50%{transform:scale(1.07) translateY(-4px)}
+  }
+  @keyframes wiggle{
+    0%,100%{transform:rotate(-5deg)}
+    50%{transform:rotate(5deg)}
+  }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback, forwardRef, useImperativeHandle } = React;
+
+// ── Data ──────────────────────────────────────────────────────────────────────
+const NOTES = [
+  { note:'C4', letter:'C', color:'#E8A5A0', key:'a', freq:261.63 },
+  { note:'D4', letter:'D', color:'#F0C99B', key:'s', freq:293.66 },
+  { note:'E4', letter:'E', color:'#EDE0A3', key:'d', freq:329.63 },
+  { note:'F4', letter:'F', color:'#C0D8A0', key:'f', freq:349.23 },
+  { note:'G4', letter:'G', color:'#95C8B8', key:'g', freq:392.00 },
+  { note:'A4', letter:'A', color:'#A0B5D8', key:'h', freq:440.00 },
+  { note:'B4', letter:'B', color:'#C8B0DC', key:'j', freq:493.88 },
+  { note:'C5', letter:'C', color:'#E5AAC2', key:'k', freq:523.25 },
+];
+const NOTE_MAP = Object.fromEntries(NOTES.map(n=>[n.note,n]));
+const KEY_MAP  = Object.fromEntries(NOTES.map(n=>[n.key, n]));
+
+const SONGS = {
+  twinkle:  { name:'Twinkle Twinkle ⭐',        notes:['C4','C4','G4','G4','A4','A4','G4','F4','F4','E4','E4','D4','D4','C4','G4','G4','F4','F4','E4','E4','D4','G4','G4','F4','F4','E4','E4','D4','C4','C4','G4','G4','A4','A4','G4','F4','F4','E4','E4','D4','D4','C4'] },
+  mary:     { name:'Mary Had a Little Lamb 🐑', notes:['E4','D4','C4','D4','E4','E4','E4','D4','D4','D4','E4','G4','G4','E4','D4','C4','D4','E4','E4','E4','E4','D4','D4','E4','D4','C4'] },
+  hotcross: { name:'Hot Cross Buns 🥐',         notes:['E4','D4','C4','E4','D4','C4','C4','C4','C4','C4','D4','D4','D4','D4','E4','D4','C4'] },
+  ode:      { name:'Ode to Joy 😊',             notes:['E4','E4','F4','G4','G4','F4','E4','D4','C4','C4','D4','E4','E4','D4','D4','E4','E4','F4','G4','G4','F4','E4','D4','C4','C4','D4','E4','D4','C4','C4'] },
+};
+
+// ── Animations — one-shot per key press ───────────────────────────────────────
+const ANIM = {
+  hop:    [{by:1,lLx:0,rLx:0,aLx:0,aRx:0},{by:-3,lLx:-1,rLx:1,aLx:-1,aRx:1},{by:-3,lLx:-1,rLx:1,aLx:-1,aRx:1},{by:0,lLx:0,rLx:0,aLx:0,aRx:0}],
+  sway:   [{bx:-2,aLx:-1,aRx:0,by:0},{bx:0,aLx:0,aRx:0,by:-1},{bx:2,aLx:0,aRx:1,by:0},{bx:0,aLx:0,aRx:0,by:0}],
+  groove: [{lLx:-1,rLx:0,aLx:-1,aRx:0,by:0},{lLx:0,rLx:-1,aLx:0,aRx:-1,by:-1},{lLx:-1,rLx:0,aLx:-1,aRx:0,by:0},{lLx:0,rLx:0,aLx:0,aRx:0,by:0}],
+  wave:   [{aLx:-3,aRx:0,by:-1},{aLx:0,aRx:-3,by:-1},{aLx:-3,aRx:0,by:-1},{aLx:0,aRx:0,by:0}],
+  celebrate:[{by:1,lLx:0,rLx:0,aLx:0,aRx:0},{by:-2,lLx:-1,rLx:1,aLx:-2,aRx:2},{by:-4,lLx:-2,rLx:2,aLx:-3,aRx:3},{by:-4,lLx:-2,rLx:2,aLx:-3,aRx:3},{by:-2,lLx:-1,rLx:1,aLx:-2,aRx:2},{by:0,lLx:0,rLx:0,aLx:0,aRx:0}],
+};
+const NOTE_TO_ANIM=['hop','sway','groove','wave','hop','sway','groove','wave'];
+
+// ── MIA — dark hair, coral dress, blue eyes ───────────────────────────────────
+function drawMia(ctx, p={}) {
+  const {by=0,bx=0,lLx=0,rLx=0,aLx=0,aRx=0,pf=0}=p;
+  const g=(x,y,w,h,c)=>{if(w<=0||h<=0)return;ctx.fillStyle=c;ctx.fillRect(x,y,w,h);};
+  const Y=by;
+  const OL='#1C0A04',HD='#3C1808',HM='#703020',HL='#A85030';
+  const SD='#D89060',SM='#F4AE78',SL='#FEE0C0';
+  const DD='#A01818',DM='#D02828',DL='#E85050';
+  const WL='#F0F4FF',WD='#B8C0D0';
+  const BT='#2C1A08',BH='#5A3820';
+  const EY='#1E5CA8',EW='#FFFFFF',EP='#0C1C30';
+  const MO='#C03040',BL='#F4B0A8';
+
+  ctx.clearRect(0,0,24,36);
+  ctx.save();
+  if(bx)ctx.translate(bx,0);
+
+  // Body
+  g(10,14+Y,4,2,SM);g(10,14+Y,1,2,SD);g(13,14+Y,1,2,SD);
+  g(7,16+Y,10,1,OL);g(7,17+Y,10,2,WL);g(8,17+Y,8,1,WD);g(7,17+Y,1,2,WD);g(16,17+Y,1,2,WD);
+  g(7,19+Y,10,6,DM);g(7,19+Y,1,6,DD);g(16,19+Y,1,6,DD);g(8,19+Y,8,1,DL);
+  g(7,25+Y,10,1,OL);g(7,26+Y,10,1,BT);
+  g(6,27+Y,12,2,DM);g(5,29+Y,14,1,DM);g(6,27+Y,1,3,DD);g(17,27+Y,1,3,DD);g(7,27+Y,10,1,DL);
+
+  // Arms
+  g(5+aLx,19+Y,2,6,SM);g(5+aLx,19+Y,1,6,SD);g(5+aLx,24+Y,2,1,SD);
+  g(17+aRx,19+Y,2,6,SM);g(18+aRx,19+Y,1,6,SD);g(17+aRx,24+Y,2,1,SD);
+
+  // Legs
+  const ly=30+Y;
+  g(8+lLx,ly,3,3,SM);g(8+lLx,ly,1,3,SD);g(13+rLx,ly,3,3,SM);g(15+rLx,ly,1,3,SD);
+  g(7+lLx,ly+3,4,2,BT);g(7+lLx,ly+3,3,1,BH);g(10+lLx,ly+3,1,2,OL);
+  g(12+rLx,ly+3,4,2,BT);g(12+rLx,ly+3,3,1,BH);g(15+rLx,ly+3,1,2,OL);
+
+  // Face
+  g(8,5+Y,8,9,SM);g(8,5+Y,1,9,SD);g(15,5+Y,1,9,SD);g(9,5+Y,6,1,SL);
+  g(9,6+Y,2,1,HD);g(13,6+Y,2,1,HD);
+  g(9,7+Y,2,2,EY);g(13,7+Y,2,2,EY);g(9,7+Y,1,1,EW);g(13,7+Y,1,1,EW);g(10,8+Y,1,1,EP);g(14,8+Y,1,1,EP);
+  g(8,9+Y,2,1,BL);g(14,9+Y,2,1,BL);
+  g(11,9+Y,1,1,SD);
+  g(10,10+Y,4,1,MO);g(9,11+Y,1,1,MO);g(14,11+Y,1,1,MO);g(10,11+Y,4,1,WL);
+  g(9,13+Y,6,1,SM);g(9,13+Y,1,1,SD);g(14,13+Y,1,1,SD);
+
+  // Hair on top
+  g(8,3+Y,8,1,OL);g(9,3+Y,6,1,HD);g(8,4+Y,8,2,HD);g(9,4+Y,6,1,HM);g(10,4+Y,4,1,HL);
+  g(7,5+Y,1,8,HD);g(16,5+Y,1,8,HD);g(8,5+Y,1,1,HM);g(15,5+Y,1,1,HM);
+  g(16,6+Y,2,6,HD);g(17,7+Y,2,5,HM);
+  const ps=[0,-1,0,1][pf%4];
+  g(17+ps,12+Y,2,2,HD);
+
+  ctx.restore();
+}
+
+// ── LILY — golden buns, teal dress, green eyes ────────────────────────────────
+function drawLily(ctx, p={}) {
+  const {by=0,bx=0,lLx=0,rLx=0,aLx=0,aRx=0,pf=0}=p;
+  const g=(x,y,w,h,c)=>{if(w<=0||h<=0)return;ctx.fillStyle=c;ctx.fillRect(x,y,w,h);};
+  const Y=by;
+  const OL='#0A100A',HD='#C09010',HM='#E8C028',HL='#F8E868',HH='#FFFAB0';
+  const SD='#D89060',SM='#F4AE78',SL='#FEE0C0';
+  const DD='#288080',DM='#40AAAA',DL='#70C8C8';
+  const BW='#E03868',BH='#F890A8';
+  const ST='#1A1A50',SH='#3838A0',SL2='#7070C0';
+  const WH='#FFFFFF',WS='#D0D8E8';
+  const EY='#207840',EW='#FFFFFF',EP='#082018';
+  const MO='#C03040',BL='#F4B0A8';
+
+  ctx.clearRect(0,0,24,36);
+  ctx.save();
+  if(bx)ctx.translate(bx,0);
+
+  // Body
+  g(10,14+Y,4,2,SM);g(10,14+Y,1,2,SD);g(13,14+Y,1,2,SD);
+  g(9,16+Y,6,1,OL);
+  g(9,17+Y,2,2,BW);g(13,17+Y,2,2,BW);g(9,17+Y,2,1,BH);g(13,17+Y,2,1,BH);
+  g(11,16+Y,2,3,BW);g(11,17+Y,2,1,BH);
+  g(7,19+Y,10,6,DM);g(7,19+Y,1,6,DD);g(16,19+Y,1,6,DD);g(8,19+Y,8,1,DL);g(7,19+Y,10,1,OL);
+  g(7,17+Y,10,1,WH);
+  g(5+aLx,19+Y,2,2,DL);g(17+aRx,19+Y,2,2,DL);
+  g(5,25+Y,14,4,DM);g(5,25+Y,1,4,DD);g(18,25+Y,1,4,DD);g(6,25+Y,12,1,DL);g(5,28+Y,14,1,WH);
+
+  // Arms
+  g(5+aLx,21+Y,2,4,SM);g(5+aLx,21+Y,1,4,SD);g(5+aLx,24+Y,2,1,SD);
+  g(17+aRx,21+Y,2,4,SM);g(18+aRx,21+Y,1,4,SD);g(17+aRx,24+Y,2,1,SD);
+
+  // Legs
+  const ly=29+Y;
+  g(8+lLx,ly,3,3,WH);g(9+lLx,ly,1,3,WS);g(13+rLx,ly,3,3,WH);g(14+rLx,ly,1,3,WS);
+  g(7+lLx,ly+3,4,2,ST);g(7+lLx,ly+3,3,1,SH);g(10+lLx,ly+3,1,2,OL);g(8+lLx,ly+3,1,1,SL2);
+  g(12+rLx,ly+3,4,2,ST);g(12+rLx,ly+3,3,1,SH);g(15+rLx,ly+3,1,2,OL);g(13+rLx,ly+3,1,1,SL2);
+
+  // Face
+  g(7,5+Y,10,9,SM);g(7,5+Y,1,9,SD);g(16,5+Y,1,9,SD);g(8,5+Y,8,1,SL);
+  g(8,6+Y,2,1,HD);g(14,6+Y,2,1,HD);
+  g(8,7+Y,3,2,EY);g(13,7+Y,3,2,EY);
+  g(8,7+Y,2,1,EW);g(13,7+Y,2,1,EW);g(10,8+Y,1,1,EP);g(15,8+Y,1,1,EP);
+  g(7,9+Y,2,2,BL);g(15,9+Y,2,2,BL);
+  g(11,9+Y,2,1,SD);
+  g(9,10+Y,6,1,MO);g(8,11+Y,1,1,MO);g(15,11+Y,1,1,MO);g(9,11+Y,6,1,WH);
+  g(8,11+Y,1,1,SD);g(15,11+Y,1,1,SD);
+  g(8,13+Y,8,1,SM);g(8,13+Y,1,1,SD);g(15,13+Y,1,1,SD);
+
+  // Hair on top
+  g(8,3+Y,8,1,OL);g(9,3+Y,6,1,HM);g(8,4+Y,8,2,HM);g(9,4+Y,6,1,HL);g(10,4+Y,4,1,HH);
+  // Left bun
+  g(3,4+Y,5,1,OL);g(3,5+Y,5,4,HD);g(4,5+Y,4,3,HM);g(5,5+Y,3,2,HL);g(6,6+Y,2,1,HH);
+  g(3,5+Y,1,4,OL);g(3,8+Y,5,1,OL);g(4,9+Y,3,1,BW);
+  // Right bun
+  g(16,4+Y,5,1,OL);g(16,5+Y,5,4,HD);g(16,5+Y,4,3,HM);g(16,5+Y,3,2,HL);g(16,6+Y,2,1,HH);
+  g(20,5+Y,1,4,OL);g(16,8+Y,5,1,OL);g(16,9+Y,3,1,BW);
+  // Hair sides
+  g(7,5+Y,1,8,HM);g(16,5+Y,1,8,HM);
+  // Swinging strands
+  const s=[0,-1,0,1][pf%4];
+  g(4+s,9+Y,2,3,HD);g(4+s,9+Y,1,2,HM);g(17+s,9+Y,2,3,HD);g(17+s,9+Y,1,2,HM);
+
+  ctx.restore();
+}
+
+// ── Sprite dancer ─────────────────────────────────────────────────────────────
+const SpriteDancer = forwardRef(function SpriteDancer({character='girl1',startFrame=0},ref) {
+  const canvasRef = useRef(null);
+  const stateRef  = useRef('idle');
+  const frameRef  = useRef(startFrame);
+  const loopRef   = useRef(false);
+  const idleTRef  = useRef(0);
+
+  useImperativeHandle(ref, ()=>({
+    animate(noteIndex) {
+      stateRef.current = NOTE_TO_ANIM[noteIndex] ?? 'hop';
+      frameRef.current = 0; loopRef.current = false;
+    },
+    celebrate() {
+      stateRef.current='celebrate'; frameRef.current=0; loopRef.current=true;
+      setTimeout(()=>{ stateRef.current='idle'; loopRef.current=false; frameRef.current=0; },3200);
+    },
+  }));
+
+  useEffect(()=>{
+    const canvas=canvasRef.current; if(!canvas)return;
+    const ctx=canvas.getContext('2d');
+    ctx.imageSmoothingEnabled=false;
+    const drawFn=character==='girl1'?drawMia:drawLily;
+    const FPS=10,frameDur=1000/FPS;
+    let lastFrameTime=0,prevTime=0,rafId;
+
+    function loop(time) {
+      rafId=requestAnimationFrame(loop);
+      const dt=Math.min((time-prevTime)/1000,0.1); prevTime=time;
+      const state=stateRef.current;
+      if(state==='idle'){
+        idleTRef.current+=dt;
+        drawFn(ctx,{by:Math.sin(idleTRef.current*Math.PI)>0.8?-1:0,pf:0});
+        return;
+      }
+      if(time-lastFrameTime<frameDur)return;
+      lastFrameTime=time;
+      const frames=ANIM[state]; if(!frames){stateRef.current='idle';return;}
+      const f=frameRef.current;
+      if(f>=frames.length){
+        if(loopRef.current){frameRef.current=0;}
+        else{stateRef.current='idle';frameRef.current=0;drawFn(ctx,{pf:0});}
+        return;
+      }
+      drawFn(ctx,{...frames[f],pf:f});
+      frameRef.current++;
+    }
+    rafId=requestAnimationFrame(loop);
+    return ()=>cancelAnimationFrame(rafId);
+  },[character]);
+
+  // 24×36 game px → 5× = 120×180 CSS px
+  return <canvas ref={canvasRef} width={24} height={36}
+                 style={{width:120,height:180,imageRendering:'pixelated'}}/>;
+});
+
+// ── Audio ─────────────────────────────────────────────────────────────────────
+function makeAudio() {
+  let ctx=null;
+  return {
+    unlock(){ if(!ctx)ctx=new(window.AudioContext||window.webkitAudioContext)(); if(ctx.state==='suspended')ctx.resume(); },
+    play(freq){ if(!ctx)return; const now=ctx.currentTime,dur=1.1,g=ctx.createGain(),o=ctx.createOscillator(); g.gain.setValueAtTime(0.4,now); g.gain.exponentialRampToValueAtTime(0.001,now+dur); g.connect(ctx.destination); o.type='triangle'; o.frequency.setValueAtTime(freq,now); o.connect(g); o.start(now); o.stop(now+dur); },
+  };
+}
+const audio=makeAudio();
+
+// ── Main app ──────────────────────────────────────────────────────────────────
+function PianoApp() {
+  const [started,setStarted]                   = useState(false);
+  const [currentSong,setCurrentSong]           = useState(null);
+  const [currentNoteIndex,setCurrentNoteIndex] = useState(0);
+  const [pressedKey,setPressedKey]             = useState(null);
+  const [celebrate,setCelebrate]               = useState(false);
+
+  const pianoRef      = useRef(null);
+  const spriteRefs    = [useRef(null),useRef(null)];
+  const touchActive   = useRef(false);
+  const lastTouchNote = useRef(null);
+  const isMouseDown   = useRef(false);
+  const lastMouseNote = useRef(null);
+  const playNoteRef   = useRef(null);
+
+  const playNote = useCallback((noteName)=>{
+    const note=NOTE_MAP[noteName]; if(!note)return;
+    audio.play(note.freq);
+    setPressedKey(noteName);
+    setTimeout(()=>setPressedKey(k=>k===noteName?null:k),180);
+    const idx=NOTES.findIndex(n=>n.note===noteName);
+    spriteRefs[0].current?.animate(idx);
+    setTimeout(()=>spriteRefs[1].current?.animate(idx),120);
+    if(currentSong){
+      const song=SONGS[currentSong];
+      if(song.notes[currentNoteIndex]===noteName){
+        const next=currentNoteIndex+1;
+        if(next>=song.notes.length){
+          setCelebrate(true); setTimeout(()=>setCelebrate(false),3200);
+          setCurrentNoteIndex(0); spriteRefs.forEach(r=>r.current?.celebrate());
+        } else { setCurrentNoteIndex(next); }
+      }
+    }
+  },[currentSong,currentNoteIndex]);
+
+  useEffect(()=>{ playNoteRef.current=playNote; },[playNote]);
+
+  const handleStart=()=>{ audio.unlock(); setStarted(true); };
+
+  useEffect(()=>{
+    if(!started)return;
+    const onKey=e=>{ if(e.repeat)return; const n=KEY_MAP[e.key?.toLowerCase()]; if(n){e.preventDefault();playNoteRef.current?.(n.note);} };
+    window.addEventListener('keydown',onKey);
+    return ()=>window.removeEventListener('keydown',onKey);
+  },[started]);
+
+  useEffect(()=>{
+    const up=()=>{ isMouseDown.current=false; lastMouseNote.current=null; };
+    window.addEventListener('mouseup',up);
+    return ()=>window.removeEventListener('mouseup',up);
+  },[]);
+
+  useEffect(()=>{
+    if(!started)return;
+    const piano=pianoRef.current; if(!piano)return;
+    const noteAt=(x,y)=>document.elementFromPoint(x,y)?.closest('[data-note]')?.dataset?.note??null;
+    const O={passive:false};
+    const onTouchStart=e=>{ e.preventDefault(); audio.unlock(); touchActive.current=true; const t=e.changedTouches[0],note=noteAt(t.clientX,t.clientY); if(note){lastTouchNote.current=note;playNoteRef.current?.(note);} };
+    const onTouchMove=e=>{ e.preventDefault(); if(!touchActive.current)return; const t=e.changedTouches[0],note=noteAt(t.clientX,t.clientY); if(note&&note!==lastTouchNote.current){lastTouchNote.current=note;playNoteRef.current?.(note);} };
+    const onTouchEnd=e=>{ e.preventDefault(); touchActive.current=false; lastTouchNote.current=null; };
+    piano.addEventListener('touchstart',onTouchStart,O); piano.addEventListener('touchmove',onTouchMove,O);
+    piano.addEventListener('touchend',onTouchEnd,O);     piano.addEventListener('touchcancel',onTouchEnd,O);
+    return ()=>{ piano.removeEventListener('touchstart',onTouchStart); piano.removeEventListener('touchmove',onTouchMove); piano.removeEventListener('touchend',onTouchEnd); piano.removeEventListener('touchcancel',onTouchEnd); };
+  },[started]);
+
+  const selectSong=k=>{ setCurrentSong(k); setCurrentNoteIndex(0); setCelebrate(false); };
+  const expected=currentSong?SONGS[currentSong].notes[currentNoteIndex]:null;
+  const upcoming=currentSong?SONGS[currentSong].notes.slice(currentNoteIndex,currentNoteIndex+10):[];
+  const BG='linear-gradient(180deg,#F2EADD 0%,#E4E8D8 50%,#F1E5D0 100%)';
+
+  if(!started) return (
+    <div style={{minHeight:'100vh',background:BG,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:16}}>
+      <div style={{display:'flex',gap:24,alignItems:'flex-end'}}>
+        <SpriteDancer character="girl1"/>
+        <SpriteDancer character="girl2" startFrame={2}/>
+      </div>
+      <button onClick={handleStart} style={{background:'#9CB595',color:'white',borderRadius:'9999px',padding:'0.9rem 2.2rem',fontSize:'1.2rem',fontWeight:900,boxShadow:'0 4px 12px rgba(0,0,0,0.15)'}}>
+        Tap to Start 🎵
+      </button>
+    </div>
+  );
+
+  return (
+    <div style={{minHeight:'100vh',background:BG,padding:'12px 8px',overscrollBehavior:'none'}}>
+      <div style={{maxWidth:640,margin:'0 auto'}}>
+
+        <h1 style={{textAlign:'center',color:'#6D7B5C',fontSize:'clamp(1.8rem,6vw,2.5rem)',fontWeight:900,marginBottom:12,textShadow:'2px 2px 0 rgba(255,255,255,0.7)'}}>
+          🎹 Piano Party 🎹
+        </h1>
+
+        {/* Song picker */}
+        <div style={{display:'flex',flexWrap:'wrap',justifyContent:'center',gap:8,marginBottom:12}}>
+          {[[null,'🎵 Free Play'],...Object.entries(SONGS).map(([k,s])=>[k,s.name])].map(([val,label])=>(
+            <button key={String(val)} onClick={()=>selectSong(val)}
+                    style={{padding:'6px 14px',borderRadius:'9999px',fontWeight:700,fontSize:'0.8rem',
+                            backgroundColor:currentSong===val?'#9CB595':'rgba(255,255,255,0.85)',
+                            color:currentSong===val?'white':'#6D7B5C',
+                            boxShadow:currentSong===val?'0 2px 8px rgba(0,0,0,0.15)':'none',
+                            transform:currentSong===val?'scale(1.05)':'none',transition:'all 0.15s'}}>
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {/* Stage */}
+        <div style={{position:'relative',display:'flex',justifyContent:'center',alignItems:'flex-end',gap:24,height:192,marginBottom:8}}>
+          {celebrate&&(
+            <div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',pointerEvents:'none',zIndex:10}}>
+              <div style={{fontSize:'clamp(2.5rem,10vw,4rem)',fontWeight:900,color:'#D89A94',
+                           textShadow:'2px 2px 0 white,4px 4px 0 rgba(156,181,149,0.4)',
+                           animation:'wiggle 0.35s ease-in-out infinite'}}>YAAAY! 🎉</div>
+            </div>
+          )}
+          <SpriteDancer ref={spriteRefs[0]} character="girl1" startFrame={0}/>
+          <SpriteDancer ref={spriteRefs[1]} character="girl2" startFrame={2}/>
+        </div>
+
+        {/* Next note hints */}
+        {currentSong&&(
+          <div style={{background:'rgba(255,255,255,0.85)',backdropFilter:'blur(8px)',borderRadius:16,padding:'8px 12px',marginBottom:12,maxWidth:420,margin:'0 auto 12px',boxShadow:'0 2px 8px rgba(0,0,0,0.08)'}}>
+            <div style={{textAlign:'center',fontSize:'0.75rem',fontWeight:700,color:'#6D7B5C',marginBottom:6}}>Press this next →</div>
+            <div style={{display:'flex',justifyContent:'center',alignItems:'center',gap:6,flexWrap:'wrap'}}>
+              {upcoming.length>0?upcoming.map((n,idx)=>{
+                const note=NOTE_MAP[n];
+                return(
+                  <div key={idx} style={{borderRadius:8,display:'flex',alignItems:'center',justifyContent:'center',fontWeight:900,
+                                         backgroundColor:note.color,color:'#4A3F35',
+                                         width:idx===0?44:30,height:idx===0?44:30,fontSize:idx===0?'1.4rem':'0.9rem',
+                                         opacity:Math.max(0.3,1-idx*0.1),
+                                         boxShadow:idx===0?`0 0 16px ${note.color},0 0 30px ${note.color}70`:'none',
+                                         animation:idx===0?'pulse-expected 1s ease-in-out infinite':'none'}}>
+                    {note.letter}
+                  </div>
+                );
+              }):(
+                <div style={{color:'#9A8F7E',fontStyle:'italic',padding:4}}>Song complete! 🌟</div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Piano keys */}
+        <div ref={pianoRef} style={{display:'flex',justifyContent:'center',gap:4,touchAction:'none',userSelect:'none',WebkitUserSelect:'none'}}>
+          {NOTES.map(note=>{
+            const isPressed=pressedKey===note.note,isExpected=expected===note.note;
+            return(
+              <button key={note.note} data-note={note.note}
+                      onMouseDown={()=>{isMouseDown.current=true;lastMouseNote.current=note.note;playNote(note.note);}}
+                      onMouseEnter={()=>{if(isMouseDown.current&&lastMouseNote.current!==note.note){lastMouseNote.current=note.note;playNote(note.note);}}}
+                      style={{flex:1,maxWidth:80,height:'8.5rem',borderRadius:'0 0 16px 16px',
+                              display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'flex-end',
+                              paddingBottom:8,backgroundColor:note.color,
+                              borderBottom:isPressed?'none':`5px solid rgba(74,63,53,0.22)`,
+                              transform:isPressed?'translateY(4px)':'translateY(0)',
+                              transition:'transform 80ms ease',
+                              boxShadow:isExpected?`0 0 24px 5px ${note.color},0 0 44px 14px ${note.color}70`:'0 4px 8px rgba(74,63,53,0.18)',
+                              animation:isExpected?'pulse-expected 1s ease-in-out infinite':'none',
+                              touchAction:'none'}}>
+                <span style={{fontWeight:900,fontSize:'clamp(1.1rem,3vw,1.8rem)',color:'#4A3F35',
+                              textShadow:'1px 1px 0 rgba(255,255,255,0.5)',pointerEvents:'none'}}>
+                  {note.letter}
+                </span>
+                <span style={{fontSize:'0.55rem',fontWeight:700,color:'rgba(74,63,53,0.55)',
+                              textTransform:'uppercase',letterSpacing:'0.05em',marginTop:2,pointerEvents:'none'}}>
+                  {note.key}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        <p style={{textAlign:'center',fontSize:'0.75rem',marginTop:8,fontWeight:600,color:'#6D7B5C'}}>
+          Tap · slide for a run · A S D F G H J K on keyboard 🎵
+        </p>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<PianoApp/>);
+</script>
+</body>
+</html>
