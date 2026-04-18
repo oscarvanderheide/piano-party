@@ -23,6 +23,52 @@
     0%,100%{transform:rotate(-5deg)}
     50%{transform:rotate(5deg)}
   }
+  @keyframes sprite-hop{
+    0%  {transform:translateY(0)   scale(1,1)}
+    25% {transform:translateY(-14px) scale(1.05,0.95)}
+    50% {transform:translateY(-18px) scale(0.95,1.08)}
+    75% {transform:translateY(-6px)  scale(1.02,0.98)}
+    100%{transform:translateY(0)   scale(1,1)}
+  }
+  @keyframes sprite-sway{
+    0%  {transform:rotate(0deg)  translateX(0)}
+    25% {transform:rotate(-8deg) translateX(-4px)}
+    75% {transform:rotate(8deg)  translateX(4px)}
+    100%{transform:rotate(0deg)  translateX(0)}
+  }
+  @keyframes sprite-groove{
+    0%  {transform:translateX(0)  scaleX(1)}
+    33% {transform:translateX(-5px) scaleX(0.95)}
+    66% {transform:translateX(5px)  scaleX(0.95)}
+    100%{transform:translateX(0)  scaleX(1)}
+  }
+  @keyframes sprite-wave{
+    0%  {transform:rotate(0deg)}
+    20% {transform:rotate(-15deg)}
+    50% {transform:rotate(15deg)}
+    80% {transform:rotate(-8deg)}
+    100%{transform:rotate(0deg)}
+  }
+  @keyframes sprite-celebrate{
+    0%  {transform:translateY(0)    scale(1)}
+    15% {transform:translateY(-30px) scale(1.1,0.9)}
+    40% {transform:translateY(-45px) scale(0.9,1.1)}
+    65% {transform:translateY(-20px) scale(1.05,0.97)}
+    85% {transform:translateY(-8px)  scale(1)}
+    100%{transform:translateY(0)    scale(1)}
+  }
+  .sprite-img{
+    image-rendering:pixelated;
+    transform-origin:bottom center;
+    transition:none;
+    width:120px;
+    height:auto;
+  }
+  .anim-hop     {animation:sprite-hop     0.35s ease-out}
+  .anim-sway    {animation:sprite-sway    0.4s  ease-in-out}
+  .anim-groove  {animation:sprite-groove  0.4s  ease-in-out}
+  .anim-wave    {animation:sprite-wave    0.45s ease-in-out}
+  .anim-celebrate{animation:sprite-celebrate 0.7s ease-in-out 3}
 </style>
 </head>
 <body>
@@ -180,61 +226,35 @@ function drawLily(ctx, p={}) {
   ctx.restore();
 }
 
-// ── Sprite dancer ─────────────────────────────────────────────────────────────
-const SpriteDancer = forwardRef(function SpriteDancer({character='girl1',startFrame=0},ref) {
-  const canvasRef = useRef(null);
-  const stateRef  = useRef('idle');
-  const frameRef  = useRef(startFrame);
-  const loopRef   = useRef(false);
-  const idleTRef  = useRef(0);
+// ── Sprite dancer — GIF based ────────────────────────────────────────────────
+const ANIM_CLASSES = ['anim-hop','anim-sway','anim-groove','anim-wave',
+                      'anim-hop','anim-sway','anim-groove','anim-wave'];
+
+const SpriteDancer = forwardRef(function SpriteDancer({src, flip=false}, ref) {
+  const imgRef = useRef(null);
+
+  function trigger(cls, duration) {
+    const el = imgRef.current; if(!el) return;
+    el.classList.remove(...ANIM_CLASSES, 'anim-celebrate');
+    void el.offsetWidth; // reflow to restart animation
+    el.classList.add(cls);
+    setTimeout(()=>el.classList.remove(cls), duration);
+  }
 
   useImperativeHandle(ref, ()=>({
-    animate(noteIndex) {
-      stateRef.current = NOTE_TO_ANIM[noteIndex] ?? 'hop';
-      frameRef.current = 0; loopRef.current = false;
-    },
-    celebrate() {
-      stateRef.current='celebrate'; frameRef.current=0; loopRef.current=true;
-      setTimeout(()=>{ stateRef.current='idle'; loopRef.current=false; frameRef.current=0; },3200);
-    },
+    animate(noteIndex) { trigger(ANIM_CLASSES[noteIndex] ?? 'anim-hop', 450); },
+    celebrate()        { trigger('anim-celebrate', 2200); },
   }));
 
-  useEffect(()=>{
-    const canvas=canvasRef.current; if(!canvas)return;
-    const ctx=canvas.getContext('2d');
-    ctx.imageSmoothingEnabled=false;
-    const drawFn=character==='girl1'?drawMia:drawLily;
-    const FPS=10,frameDur=1000/FPS;
-    let lastFrameTime=0,prevTime=0,rafId;
-
-    function loop(time) {
-      rafId=requestAnimationFrame(loop);
-      const dt=Math.min((time-prevTime)/1000,0.1); prevTime=time;
-      const state=stateRef.current;
-      if(state==='idle'){
-        idleTRef.current+=dt;
-        drawFn(ctx,{by:Math.sin(idleTRef.current*Math.PI)>0.8?-1:0,pf:0});
-        return;
-      }
-      if(time-lastFrameTime<frameDur)return;
-      lastFrameTime=time;
-      const frames=ANIM[state]; if(!frames){stateRef.current='idle';return;}
-      const f=frameRef.current;
-      if(f>=frames.length){
-        if(loopRef.current){frameRef.current=0;}
-        else{stateRef.current='idle';frameRef.current=0;drawFn(ctx,{pf:0});}
-        return;
-      }
-      drawFn(ctx,{...frames[f],pf:f});
-      frameRef.current++;
-    }
-    rafId=requestAnimationFrame(loop);
-    return ()=>cancelAnimationFrame(rafId);
-  },[character]);
-
-  // 24×36 game px → 5× = 120×180 CSS px
-  return <canvas ref={canvasRef} width={24} height={36}
-                 style={{width:120,height:180,imageRendering:'pixelated'}}/>;
+  return (
+    <img
+      ref={imgRef}
+      src={src}
+      alt="dancer"
+      className="sprite-img"
+      style={{transform: flip ? 'scaleX(-1)' : 'none'}}
+    />
+  );
 });
 
 // ── Audio ─────────────────────────────────────────────────────────────────────
@@ -321,8 +341,8 @@ function PianoApp() {
   if(!started) return (
     <div style={{minHeight:'100vh',background:BG,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:16}}>
       <div style={{display:'flex',gap:24,alignItems:'flex-end'}}>
-        <SpriteDancer character="girl1"/>
-        <SpriteDancer character="girl2" startFrame={2}/>
+        <SpriteDancer src="a.gif" flip={false}/>
+        <SpriteDancer src="f.gif" flip={true}/>
       </div>
       <button onClick={handleStart} style={{background:'#9CB595',color:'white',borderRadius:'9999px',padding:'0.9rem 2.2rem',fontSize:'1.2rem',fontWeight:900,boxShadow:'0 4px 12px rgba(0,0,0,0.15)'}}>
         Tap to Start 🎵
@@ -361,8 +381,8 @@ function PianoApp() {
                            animation:'wiggle 0.35s ease-in-out infinite'}}>YAAAY! 🎉</div>
             </div>
           )}
-          <SpriteDancer ref={spriteRefs[0]} character="girl1" startFrame={0}/>
-          <SpriteDancer ref={spriteRefs[1]} character="girl2" startFrame={2}/>
+          <SpriteDancer ref={spriteRefs[0]} src="a.gif" flip={false}/>
+          <SpriteDancer ref={spriteRefs[1]} src="f.gif" flip={true}/>
         </div>
 
         {/* Next note hints */}
