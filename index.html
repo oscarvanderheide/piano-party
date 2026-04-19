@@ -102,8 +102,8 @@ const SONGS = {
   mary:     { name:'Mary Had a Little Lamb 🐑', notes:['E4','D4','C4','D4','E4','E4','E4','D4','D4','D4','E4','G4','G4','E4','D4','C4','D4','E4','E4','E4','E4','D4','D4','E4','D4','C4'] },
   hotcross: { name:'Hot Cross Buns 🥐',         notes:['E4','D4','C4','E4','D4','C4','C4','C4','C4','C4','D4','D4','D4','D4','E4','D4','C4'] },
   ode:      { name:'Ode to Joy 😊',             notes:['E4','E4','F4','G4','G4','F4','E4','D4','C4','C4','D4','E4','E4','D4','D4','E4','E4','F4','G4','G4','F4','E4','D4','C4','C4','D4','E4','D4','C4','C4'] },
-  bluey:    { name:'Bluey 🐕',                  notes:['C5','E5','G5','E5','D5','C5','G4','C5','E5','G5','C5','B4','A4','G4','A4','B4','C5','D5','E5','D5','C5','B4','A4','G4','C5','E5','G5','C5'] },
-  peppa:    { name:'Peppa Pig 🐷',              notes:['G4','E4','C4','D4','G4','G4','B4','D5','F5','E5','C5','E5','E5','G4','G4','E4','C4','D4','G4','G4','B4','D5','F5','E5','C5','E5','E5','D5'] },
+  bluey:    { name:'Bluey 🐕',                  notes:['A5','G5','F5','E5','C5','D5','F5','D5','F5','D5','C5','D5','E5','C5','D5','C5','B4','A4','G4','C5','E5','G5','A5','G5','F5','E5','C5'] },
+  peppa:    { name:'Peppa Pig 🐷',              notes:['G4','E4','C4','D4','G4','G4','B4','D5','F5','E5','C5','E5','E5','G4','G4','E4','C4','D4','G4','G4','B4','D5','F5','C5'] },
 };
 
 // ── Animations — one-shot per key press ───────────────────────────────────────
@@ -285,6 +285,7 @@ function PianoApp() {
   const [currentNoteIndex,setCurrentNoteIndex] = useState(0);
   const [pressedKey,setPressedKey]             = useState(null);
   const [celebrate,setCelebrate]               = useState(false);
+  const [autoPlaying,setAutoPlaying]           = useState(false);
 
   const pianoRef      = useRef(null);
   const spriteRefs    = [useRef(null),useRef(null)];
@@ -293,8 +294,9 @@ function PianoApp() {
   const isMouseDown   = useRef(false);
   const lastMouseNote = useRef(null);
   const playNoteRef   = useRef(null);
+  const autoPlayTimer = useRef(null);
 
-  const playNote = useCallback((noteName)=>{
+  const playNote = useCallback((noteName,isAuto=false)=>{
     const note=NOTE_MAP[noteName]; if(!note)return;
     audio.play(note.freq);
     setPressedKey(noteName);
@@ -302,7 +304,7 @@ function PianoApp() {
     const idx=NOTES.findIndex(n=>n.note===noteName);
     spriteRefs[0].current?.animate(idx);
     setTimeout(()=>spriteRefs[1].current?.animate(idx),120);
-    if(currentSong){
+    if(currentSong && !isAuto){
       const song=SONGS[currentSong];
       if(song.notes[currentNoteIndex]===noteName){
         const next=currentNoteIndex+1;
@@ -313,6 +315,38 @@ function PianoApp() {
       }
     }
   },[currentSong,currentNoteIndex]);
+
+  const stopAutoPlay = useCallback(()=>{
+    if(autoPlayTimer.current){ clearTimeout(autoPlayTimer.current); autoPlayTimer.current=null; }
+    setAutoPlaying(false);
+  },[]);
+
+  const startAutoPlay = useCallback(()=>{
+    if(!currentSong) return;
+    if(autoPlayTimer.current) clearTimeout(autoPlayTimer.current);
+    const notes = SONGS[currentSong].notes;
+    setAutoPlaying(true);
+    setCurrentNoteIndex(0);
+    const tempo = 380;
+    let i = 0;
+    const step = ()=>{
+      if(i >= notes.length){
+        autoPlayTimer.current = null;
+        setAutoPlaying(false);
+        setCelebrate(true); setTimeout(()=>setCelebrate(false),3200);
+        spriteRefs.forEach(r=>r.current?.celebrate());
+        setCurrentNoteIndex(0);
+        return;
+      }
+      playNoteRef.current?.(notes[i], true);
+      i++;
+      setCurrentNoteIndex(i);
+      autoPlayTimer.current = setTimeout(step, tempo);
+    };
+    step();
+  },[currentSong]);
+
+  useEffect(()=>()=>{ if(autoPlayTimer.current) clearTimeout(autoPlayTimer.current); },[]);
 
   useEffect(()=>{ playNoteRef.current=playNote; },[playNote]);
 
@@ -344,7 +378,7 @@ function PianoApp() {
     return ()=>{ piano.removeEventListener('touchstart',onTouchStart); piano.removeEventListener('touchmove',onTouchMove); piano.removeEventListener('touchend',onTouchEnd); piano.removeEventListener('touchcancel',onTouchEnd); };
   },[started]);
 
-  const selectSong=k=>{ setCurrentSong(k); setCurrentNoteIndex(0); setCelebrate(false); };
+  const selectSong=k=>{ stopAutoPlay(); setCurrentSong(k); setCurrentNoteIndex(0); setCelebrate(false); };
   const expected=currentSong?SONGS[currentSong].notes[currentNoteIndex]:null;
   const upcoming=currentSong?SONGS[currentSong].notes.slice(currentNoteIndex,currentNoteIndex+10):[];
   const BG='linear-gradient(180deg,#F2EADD 0%,#E4E8D8 50%,#F1E5D0 100%)';
@@ -382,6 +416,18 @@ function PianoApp() {
             </button>
           ))}
         </div>
+
+        {/* Autoplay control */}
+        {currentSong && (
+          <div style={{textAlign:'center',marginBottom:12}}>
+            <button onClick={autoPlaying?stopAutoPlay:startAutoPlay}
+                    style={{padding:'6px 18px',borderRadius:'9999px',fontWeight:800,fontSize:'0.85rem',
+                            backgroundColor:autoPlaying?'#D89A94':'#F4B183',color:'white',
+                            boxShadow:'0 2px 8px rgba(0,0,0,0.15)',transition:'all 0.15s'}}>
+              {autoPlaying?'⏸ Stop':'▶ Autoplay'}
+            </button>
+          </div>
+        )}
 
         {/* Stage */}
         <div style={{position:'relative',display:'flex',justifyContent:'center',alignItems:'flex-end',gap:24,height:192,marginBottom:8}}>
